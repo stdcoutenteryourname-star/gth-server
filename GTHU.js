@@ -15,4 +15,4 @@ const users = new mongoose.Schema({
     isVerified: { type: Boolean, default: false }
 });
 
-module.exports = mongoose.model('User', users);
+module.exports = mongoose.model('User', users, 'users');
