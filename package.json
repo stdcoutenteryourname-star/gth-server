@@ -1,0 +1,17 @@
+{
+  "name": "gthserver",
+  "version": "1.0.0",
+  "description": "Backend for GTH",
+  "main": "GTHS.js",
+  "scripts": {
+    "start": "node GTHS.js"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "mongoose": "^7.4.0",
+    "nodemailer": "^6.9.4"
+  }
+}
