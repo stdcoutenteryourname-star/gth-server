@@ -13,6 +13,16 @@ app.use(cors());
 app.use(express.urlencoded({extended: true}));
 app.use(express.json());
 
+app.use((req, res, next) => {
+    console.log(`🌐 طلب جديد: ${req.method} ${req.url}`);
+    next();
+});
+app.use(cors({
+    origin: '*', // يسمح لأي موقع بالاتصال
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 mongoose.connect(process.env.DB_URI)
 .then(() => console.log("✅ Connected to Database"))
 .catch(err => console.error("❌ Error connecting to database:", err));
@@ -111,6 +121,7 @@ app.post('/reg', async (req, res) => {
         res.status(500).send("Error");
     }
 });
+
 
 app.post('/verify-otp', async (req, res) => {
     try {
