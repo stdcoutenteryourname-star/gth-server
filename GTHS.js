@@ -24,14 +24,24 @@ function generateOTP() {
 
 app.post('/reg', async (req, res) => {
     try {
+        // 1. هذا السطر سيكشف لنا ماذا يرسل المتصفح بالضبط!
+        console.log("📥 البيانات المستلمة من المتصفح:", req.body);
+
         const { email, fullName, role, schoolId, pword } = req.body;
+        
+        // 2. حماية السيرفر من الانهيار إذا كانت هناك بيانات ناقصة
+        if (!email || !pword || !fullName || !role || !schoolId) {
+            console.log("❌ خطأ: هناك بيانات ناقصة لم يرسلها المتصفح!");
+            return res.status(400).send("يوجد بيانات ناقصة");
+        }
+
         const hashedPassword = await bcrypt.hash(pword, 10);
         
         const newUser = new User({
             email: email.toLowerCase().trim(),
-            fullName,
-            role,
-            schoolId,
+            fullName: fullName,
+            role: role.toLowerCase().trim(), // ضمان أن يكون الدور بأحرف صغيرة
+            schoolId: schoolId,
             pword: hashedPassword,
             isVerified: true
         });
@@ -39,6 +49,12 @@ app.post('/reg', async (req, res) => {
         await newUser.save();
         res.status(201).send("Created");
     } catch (err) {
+        // 3. هذا السطر سيكشف لنا سبب الخطأ إذا كان من قاعدة البيانات
+        console.error("🔍 تفاصيل خطأ التسجيل:", err.message);
+        
+        if (err.code === 11000) {
+            return res.status(400).send("عذراً، هذا الإيميل مسجل مسبقاً.");
+        }
         res.status(500).send("Error");
     }
 });
