@@ -33,29 +33,25 @@ function generateOTP() {
 // ==========================================
 app.post('/reg', async (req, res) => {
     try {
-        const { role, email, fullName, schoolId, section, pword, secretCode } = req.body;
+        const { email, fullName, role, schoolId, pword } = req.body;
         
-        // تحقق من الأكواد السرية بصرامة
-        if (role === 'teacher' && secretCode !== '2026') return res.status(400).send("InvalidTeacherCode");
-        if (role === 'admin' && secretCode !== '1000') return res.status(400).send("InvalidAdminCode");
-        
-        const cleanEmail = email.toLowerCase().trim();
-        const existingUser = await User.findOne({ email: cleanEmail });
-        if(existingUser) return res.status(400).send("Taken");
-
-        const hpword = await bcrypt.hash(pword, 10);
-        const { otp, otpExpires } = generateOTP();
-        
-        // الإداري لا يملك مدرسة فوراً، يتم تعليق حسابه حتى ينشئها
-        const finalSchoolId = role === 'admin' ? 'pending_school' : schoolId;
-
-        const newUser = new User({ 
-            email: cleanEmail, fullName, role, 
-            schoolId: finalSchoolId, 
-            section: role === 'student' ? section : undefined, 
-            pword: hpword, otp, otpExpires, isVerified: false
+        // إنشاء المستخدم وتفعيله مباشرة (isVerified: true)
+        const newUser = new User({
+            email: email.toLowerCase().trim(),
+            fullName,
+            role,
+            schoolId,
+            pword: await bcrypt.hash(pword, 10),
+            isVerified: true // تفعيل تلقائي بدون إيميل
         });
 
+        await newUser.save();
+        res.status(200).send("تم التسجيل بنجاح!");
+    } catch (err) {
+        console.error("خطأ التسجيل:", err);
+        res.status(500).send("حدث خطأ في السيرفر");
+    }
+});
         await newUser.save();
         
        // استبدل هذا الجزء:
