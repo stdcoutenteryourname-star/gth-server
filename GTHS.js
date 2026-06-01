@@ -33,28 +33,44 @@ function generateOTP() {
     return { otp, otpExpires };
 }
 
+transporter.verify(function(error, success) {
+    if (error) {
+        console.log("❌ [إنذار] خطأ في الاتصال بجوجل، تحقق من الإيميل أو الباسورد:", error.message);
+    } else {
+        console.log("✅ [نجاح] سيرفر الإيميل جاهز وموثق 100% لإرسال الرموز!");
+    }
+});
+
 app.post('/reg', async (req, res) => {
+    console.log("=== 🚀 [1] استلام طلب تسجيل جديد ===");
+    console.log("📦 البيانات المستلمة:", req.body);
+
     try {
         const { email, fullName, role, schoolId, section, pword } = req.body;
-        const cleanEmail = email.toLowerCase().trim();
         
-        if (!cleanEmail || !pword || !fullName || !role) {
+        // فحص وجود البيانات الأساسية
+        if (!email || !pword || !fullName || !role) {
+            console.log("❌ [2] تم رفض الطلب: توجد بيانات ناقصة");
             return res.status(400).send("يوجد بيانات ناقصة");
         }
+
+        const cleanEmail = email.toLowerCase().trim();
+        console.log(`🔍 [2] جاري فحص الإيميل: ${cleanEmail}`);
 
         // حماية ضد الحسابات المعلقة
         const existingUser = await User.findOne({ email: cleanEmail });
         if (existingUser) {
             if (existingUser.isVerified) {
+                console.log("⚠️ [3] الإيميل مسجل ومفعل مسبقاً");
                 return res.status(400).send("عذراً، هذا الإيميل مسجل مسبقاً ومفعل.");
             } else {
+                console.log("🗑️ [3] جاري تنظيف حساب قديم غير مفعل...");
                 await User.deleteOne({ email: cleanEmail });
             }
         }
 
         const finalSchoolId = schoolId ? schoolId : "pending";
         const finalSection = section ? section : "";
-
         const hashedPassword = await bcrypt.hash(pword, 10);
         const { otp, otpExpires } = generateOTP();
         
@@ -70,8 +86,11 @@ app.post('/reg', async (req, res) => {
             isVerified: false
         });
 
+        console.log("💾 [4] جاري حفظ بيانات المستخدم في قاعدة البيانات...");
         await newUser.save();
+        console.log("✅ [5] تم الحفظ بنجاح!");
 
+        console.log("📧 [6] جاري الاتصال بجوجل لإرسال الإيميل...");
         try {
             await transporter.sendMail({
                 from: process.env.EMAIL_USER,
@@ -79,42 +98,20 @@ app.post('/reg', async (req, res) => {
                 subject: 'رمز التحقق - الجدول الذكي',
                 text: `مرحباً ${fullName}،\nرمز التحقق الخاص بك هو: ${otp}`
             });
+            console.log("✅ [7] تم إرسال الإيميل بنجاح للمستخدم!");
             res.status(200).send("Sent");
         } catch (emailError) {
-            console.error("فشل إرسال الإيميل:", emailError);
-            await User.deleteOne({ email: cleanEmail }); // نظام التراجع (Rollback)
-            return res.status(500).send("فشل إرسال رمز التحقق. تأكد من إعدادات الإيميل.");
+            console.error("❌ [خطأ كارثي في الإيميل]:", emailError.message);
+            console.log("↩️ [8] جاري حذف الحساب (Rollback) بسبب فشل الإيميل...");
+            await User.deleteOne({ email: cleanEmail });
+            return res.status(500).send("فشل إرسال رمز التحقق.");
         }
 
     } catch (err) {
-        console.error("Registration Error:", err.message);
+        console.error("❌ [خطأ عام في السيرفر]:", err.message);
         res.status(500).send("Error");
     }
 });
-
-app.post('/verify-otp', async (req, res) => {
-    try {
-        const email = req.body.email.toLowerCase().trim();
-        const otp = req.body.otp.trim();
-        
-        const user = await User.findOne({ email });
-        if(!user) return res.status(404).send("UserNotFound");
-        if(user.otp !== otp) return res.status(400).send("WrongOTP");
-        if(user.otpExpires < new Date()) return res.status(400).send("ExpiredOTP");
-
-        await User.updateOne({ email }, { 
-            $set: { isVerified: true }, 
-            $unset: { otp: 1, otpExpires: 1 } 
-        });
-
-        const updatedUser = await User.findOne({ email }).select('-pword');
-        res.status(200).json(updatedUser);
-    } catch(err) { 
-        console.error("Verify OTP Error:", err);
-        res.status(500).send("Error"); 
-    }
-});
-
 app.post('/login', async (req, res) => {
     try {
         const email = req.body.email.toLowerCase().trim();
