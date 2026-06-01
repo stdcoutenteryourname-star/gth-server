@@ -17,10 +17,12 @@ app.use((req, res, next) => {
     console.log(`🌐 طلب جديد: ${req.method} ${req.url}`);
     next();
 });
+// استبدل app.use(cors()); بهذا الكود:
 app.use(cors({
-    origin: '*', // يسمح لأي موقع بالاتصال
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    origin: '*', // السماح لأي مصدر (يمكنك تغييرها لرابط موقعك لاحقاً إذا أردت)
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true
 }));
 
 mongoose.connect(process.env.DB_URI)
@@ -340,5 +342,7 @@ app.post('/delete-task', async (req, res) => {
         res.status(500).send("Error"); 
     }
 });
+// أضف هذا السطر أسفل الـ cors مباشرة لضمان معالجة طلبات الـ OPTIONS التي يرسلها المتصفح قبل الـ POST
+app.options('*', cors());
 
 app.listen(3000, () => console.log("🚀 Server running on port 3000"));
