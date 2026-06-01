@@ -35,14 +35,16 @@ app.post('/reg', async (req, res) => {
     try {
         const { email, fullName, role, schoolId, pword } = req.body;
         
-        // إنشاء المستخدم وتفعيله مباشرة (isVerified: true)
+        // تشفير كلمة المرور قبل الحفظ
+        const hashedPassword = await bcrypt.hash(pword, 10);
+        
         const newUser = new User({
             email: email.toLowerCase().trim(),
             fullName,
             role,
             schoolId,
-            pword: await bcrypt.hash(pword, 10),
-            isVerified: true // تفعيل تلقائي بدون إيميل
+            pword: hashedPassword,
+            isVerified: true // تفعيل تلقائي لتجاوز مشكلة الإيميل
         });
 
         await newUser.save();
