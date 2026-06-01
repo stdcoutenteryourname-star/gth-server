@@ -55,6 +55,7 @@ function generateOTP() {
 // ==========================================
 app.post('/reg', async (req, res) => {
     try {
+        console.log("البيانات القادمة:", req.body);
         const { email, fullName, role, schoolId, section, pword } = req.body;
         const cleanEmail = email.toLowerCase().trim();
         
