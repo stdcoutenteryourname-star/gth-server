@@ -3,6 +3,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
+const nodemailer = require('nodemailer');
 const User = require('./GTHU');
 const Task = require('./GTHTask');
 const School = require('./GTHSchool');
@@ -13,8 +14,18 @@ app.use(express.urlencoded({extended: true}));
 app.use(express.json());
 
 mongoose.connect(process.env.DB_URI)
-.then(() => console.log("Connected"))
-.catch(err => console.error("Error:", err));
+.then(() => console.log("Connected to Database"))
+.catch(err => console.error("Error connecting to database:", err));
+
+const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: { 
+        user: process.env.EMAIL_USER, 
+        pass: process.env.EMAIL_PASS 
+    }
+});
 
 function generateOTP() {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -24,8 +35,6 @@ function generateOTP() {
 
 app.post('/reg', async (req, res) => {
     try {
-        console.log(" البيانات المستلمة:", req.body);
-
         const { email, fullName, role, schoolId, section, pword } = req.body;
         
         if (!email || !pword || !fullName || !role) {
@@ -36,6 +45,7 @@ app.post('/reg', async (req, res) => {
         const finalSection = section ? section : "";
 
         const hashedPassword = await bcrypt.hash(pword, 10);
+        const { otp, otpExpires } = generateOTP();
         
         const newUser = new User({
             email: email.toLowerCase().trim(),
@@ -44,19 +54,30 @@ app.post('/reg', async (req, res) => {
             schoolId: finalSchoolId,
             section: finalSection,
             pword: hashedPassword,
-            isVerified: true
+            otp: otp,
+            otpExpires: otpExpires,
+            isVerified: false
         });
 
         await newUser.save();
-        res.status(201).send("Created");
+
+        await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to: newUser.email,
+            subject: 'رمز التحقق - الجدول الذكي',
+            text: `مرحباً ${fullName}،\nرمز التحقق الخاص بك هو: ${otp}`
+        });
+
+        res.status(200).send("Sent");
     } catch (err) {
-        console.error(" تفاصيل خطأ التسجيل:", err.message);
+        console.error("Registration Error:", err.message);
         if (err.code === 11000) {
             return res.status(400).send("عذراً، هذا الإيميل مسجل مسبقاً.");
         }
         res.status(500).send("Error");
     }
 });
+
 app.post('/verify-otp', async (req, res) => {
     try {
         const email = req.body.email.toLowerCase().trim();
@@ -75,6 +96,7 @@ app.post('/verify-otp', async (req, res) => {
         const updatedUser = await User.findOne({ email }).select('-pword');
         res.status(200).json(updatedUser);
     } catch(err) { 
+        console.error("Verify OTP Error:", err);
         res.status(500).send("Error"); 
     }
 });
@@ -91,9 +113,16 @@ app.post('/login', async (req, res) => {
         const { otp, otpExpires } = generateOTP();
         await User.updateOne({ email }, { $set: { otp, otpExpires } });
         
-        console.log("OTP:", otp);
+        await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: 'رمز تسجيل الدخول - الجدول الذكي',
+            text: `مرحباً ${user.fullName}،\nرمز الدخول الخاص بك هو: ${otp}`
+        });
+
         res.status(200).send("OTPSent");
     } catch(err) { 
+        console.error("Login Error:", err);
         res.status(500).send("Error"); 
     }
 });
@@ -216,9 +245,18 @@ app.post('/resend-otp', async (req, res) => {
         const { otp, otpExpires } = generateOTP();
         await User.updateOne({ email }, { $set: { otp, otpExpires } });
         
-        console.log("OTP:", otp);
+        await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: 'إعادة إرسال رمز التحقق - الجدول الذكي',
+            text: `رمز التحقق الجديد الخاص بك هو: ${otp}`
+        });
+
         res.status(200).send("Sent");
-    } catch(err) { res.status(500).send("Error"); }
+    } catch(err) { 
+        console.error("Resend OTP Error:", err);
+        res.status(500).send("Error"); 
+    }
 });
 
 app.post('/forgot-password', async (req, res) => {
@@ -230,9 +268,18 @@ app.post('/forgot-password', async (req, res) => {
         const { otp, otpExpires } = generateOTP();
         await User.updateOne({ email }, { $set: { otp, otpExpires } });
         
-        console.log("OTP:", otp);
+        await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: 'إعادة تعيين كلمة المرور - الجدول الذكي',
+            text: `طلبنا هذا الرمز لإعادة تعيين كلمة المرور. الرمز هو: ${otp}`
+        });
+
         res.status(200).send("Sent");
-    } catch(err) { res.status(500).send("Error"); }
+    } catch(err) { 
+        console.error("Forgot Password Error:", err);
+        res.status(500).send("Error"); 
+    }
 });
 
 app.post('/reset-password', async (req, res) => {
@@ -244,7 +291,9 @@ app.post('/reset-password', async (req, res) => {
         await User.updateOne({ email: cleanEmail }, { $set: { pword: hpword } });
         
         res.status(200).send("Success");
-    } catch(err) { res.status(500).send("Error"); }
+    } catch(err) { 
+        res.status(500).send("Error"); 
+    }
 });
 
-app.listen(3000, () => console.log("Run"));
+app.listen(3000, () => console.log("Server running on port 3000 🚀"));
