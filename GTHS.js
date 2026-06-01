@@ -42,13 +42,12 @@ app.post('/reg', async (req, res) => {
             return res.status(400).send("يوجد بيانات ناقصة");
         }
 
-        // 1. حماية ضد الحسابات المعلقة (حل مشكلة الإيميل المكرر بسبب خطأ سابق)
+        // حماية ضد الحسابات المعلقة
         const existingUser = await User.findOne({ email: cleanEmail });
         if (existingUser) {
             if (existingUser.isVerified) {
                 return res.status(400).send("عذراً، هذا الإيميل مسجل مسبقاً ومفعل.");
             } else {
-                // إذا كان الحساب موجوداً ولكنه غير مفعل بسبب خطأ سابق، نحذفه لنبدأ من جديد
                 await User.deleteOne({ email: cleanEmail });
             }
         }
@@ -71,10 +70,8 @@ app.post('/reg', async (req, res) => {
             isVerified: false
         });
 
-        // 2. حفظ المستخدم مبدئياً
         await newUser.save();
 
-        // 3. محاولة إرسال الإيميل
         try {
             await transporter.sendMail({
                 from: process.env.EMAIL_USER,
@@ -82,40 +79,15 @@ app.post('/reg', async (req, res) => {
                 subject: 'رمز التحقق - الجدول الذكي',
                 text: `مرحباً ${fullName}،\nرمز التحقق الخاص بك هو: ${otp}`
             });
-
-            // إذا نجح الإرسال، نخبر الموقع ليفتح نافذة الرمز
             res.status(200).send("Sent");
-
         } catch (emailError) {
-            // 🚨 إذا فشل إرسال الإيميل (التراجع / Rollback)
             console.error("فشل إرسال الإيميل:", emailError);
-            
-            // نحذف المستخدم فوراً من قاعدة البيانات لكي لا يعلق
-            await User.deleteOne({ email: cleanEmail });
-            
+            await User.deleteOne({ email: cleanEmail }); // نظام التراجع (Rollback)
             return res.status(500).send("فشل إرسال رمز التحقق. تأكد من إعدادات الإيميل.");
         }
 
     } catch (err) {
         console.error("Registration Error:", err.message);
-        res.status(500).send("Error");
-    }
-});
-        await newUser.save();
-
-        await transporter.sendMail({
-            from: process.env.EMAIL_USER,
-            to: newUser.email,
-            subject: 'رمز التحقق - الجدول الذكي',
-            text: `مرحباً ${fullName}،\nرمز التحقق الخاص بك هو: ${otp}`
-        });
-
-        res.status(200).send("Sent");
-    } catch (err) {
-        console.error("Registration Error:", err.message);
-        if (err.code === 11000) {
-            return res.status(400).send("عذراً، هذا الإيميل مسجل مسبقاً.");
-        }
         res.status(500).send("Error");
     }
 });
