@@ -3,7 +3,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
+
 const User = require('./GTHU');
 const Task = require('./GTHTask');
 const School = require('./GTHSchool');
@@ -14,18 +14,35 @@ app.use(express.urlencoded({extended: true}));
 app.use(express.json());
 
 mongoose.connect(process.env.DB_URI)
-.then(() => console.log("Connected to Database"))
-.catch(err => console.error("Error connecting to database:", err));
+.then(() => console.log("✅ Connected to Database"))
+.catch(err => console.error("❌ Error connecting to database:", err));
 
-const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
-    auth: { 
-        user: process.env.EMAIL_USER, 
-        pass: process.env.EMAIL_PASS 
+// ==========================================
+// محرك إرسال الإيميلات الاحترافي (عبر API لتخطي حظر Render)
+// ==========================================
+async function sendEmailAPI(toEmail, subject, textContent) {
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+            'accept': 'application/json',
+            'api-key': process.env.BREVO_API_KEY,
+            'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+            sender: { email: process.env.EMAIL_USER, name: 'الجدول الذكي' },
+            to: [{ email: toEmail }],
+            subject: subject,
+            textContent: textContent
+        })
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json();
+        console.error("Brevo API Error:", errorData);
+        throw new Error("فشل الإرسال عبر API");
     }
-});
+    return await response.json();
+}
 
 function generateOTP() {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -33,44 +50,30 @@ function generateOTP() {
     return { otp, otpExpires };
 }
 
-transporter.verify(function(error, success) {
-    if (error) {
-        console.log("❌ [إنذار] خطأ في الاتصال بجوجل، تحقق من الإيميل أو الباسورد:", error.message);
-    } else {
-        console.log("✅ [نجاح] سيرفر الإيميل جاهز وموثق 100% لإرسال الرموز!");
-    }
-});
-
+// ==========================================
+// مسارات التسجيل والدخول
+// ==========================================
 app.post('/reg', async (req, res) => {
-    console.log("=== 🚀 [1] استلام طلب تسجيل جديد ===");
-    console.log("📦 البيانات المستلمة:", req.body);
-
     try {
         const { email, fullName, role, schoolId, section, pword } = req.body;
+        const cleanEmail = email.toLowerCase().trim();
         
-        // فحص وجود البيانات الأساسية
-        if (!email || !pword || !fullName || !role) {
-            console.log("❌ [2] تم رفض الطلب: توجد بيانات ناقصة");
+        if (!cleanEmail || !pword || !fullName || !role) {
             return res.status(400).send("يوجد بيانات ناقصة");
         }
 
-        const cleanEmail = email.toLowerCase().trim();
-        console.log(`🔍 [2] جاري فحص الإيميل: ${cleanEmail}`);
-
-        // حماية ضد الحسابات المعلقة
         const existingUser = await User.findOne({ email: cleanEmail });
         if (existingUser) {
             if (existingUser.isVerified) {
-                console.log("⚠️ [3] الإيميل مسجل ومفعل مسبقاً");
                 return res.status(400).send("عذراً، هذا الإيميل مسجل مسبقاً ومفعل.");
             } else {
-                console.log("🗑️ [3] جاري تنظيف حساب قديم غير مفعل...");
                 await User.deleteOne({ email: cleanEmail });
             }
         }
 
         const finalSchoolId = schoolId ? schoolId : "pending";
         const finalSection = section ? section : "";
+
         const hashedPassword = await bcrypt.hash(pword, 10);
         const { otp, otpExpires } = generateOTP();
         
@@ -86,32 +89,51 @@ app.post('/reg', async (req, res) => {
             isVerified: false
         });
 
-        console.log("💾 [4] جاري حفظ بيانات المستخدم في قاعدة البيانات...");
         await newUser.save();
-        console.log("✅ [5] تم الحفظ بنجاح!");
 
-        console.log("📧 [6] جاري الاتصال بجوجل لإرسال الإيميل...");
         try {
-            await transporter.sendMail({
-                from: process.env.EMAIL_USER,
-                to: cleanEmail,
-                subject: 'رمز التحقق - الجدول الذكي',
-                text: `مرحباً ${fullName}،\nرمز التحقق الخاص بك هو: ${otp}`
-            });
-            console.log("✅ [7] تم إرسال الإيميل بنجاح للمستخدم!");
+            // إرسال الإيميل عبر الـ API
+            await sendEmailAPI(
+                cleanEmail, 
+                'رمز التحقق - الجدول الذكي', 
+                `مرحباً ${fullName}،\nرمز التحقق الخاص بك هو: ${otp}`
+            );
             res.status(200).send("Sent");
         } catch (emailError) {
-            console.error("❌ [خطأ كارثي في الإيميل]:", emailError.message);
-            console.log("↩️ [8] جاري حذف الحساب (Rollback) بسبب فشل الإيميل...");
+            console.error("خطأ في إرسال الإيميل:", emailError);
             await User.deleteOne({ email: cleanEmail });
             return res.status(500).send("فشل إرسال رمز التحقق.");
         }
 
     } catch (err) {
-        console.error("❌ [خطأ عام في السيرفر]:", err.message);
+        console.error("Registration Error:", err.message);
         res.status(500).send("Error");
     }
 });
+
+app.post('/verify-otp', async (req, res) => {
+    try {
+        const email = req.body.email.toLowerCase().trim();
+        const otp = req.body.otp.trim();
+        
+        const user = await User.findOne({ email });
+        if(!user) return res.status(404).send("UserNotFound");
+        if(user.otp !== otp) return res.status(400).send("WrongOTP");
+        if(user.otpExpires < new Date()) return res.status(400).send("ExpiredOTP");
+
+        await User.updateOne({ email }, { 
+            $set: { isVerified: true }, 
+            $unset: { otp: 1, otpExpires: 1 } 
+        });
+
+        const updatedUser = await User.findOne({ email }).select('-pword');
+        res.status(200).json(updatedUser);
+    } catch(err) { 
+        console.error("Verify OTP Error:", err);
+        res.status(500).send("Error"); 
+    }
+});
+
 app.post('/login', async (req, res) => {
     try {
         const email = req.body.email.toLowerCase().trim();
@@ -124,12 +146,11 @@ app.post('/login', async (req, res) => {
         const { otp, otpExpires } = generateOTP();
         await User.updateOne({ email }, { $set: { otp, otpExpires } });
         
-        await transporter.sendMail({
-            from: process.env.EMAIL_USER,
-            to: email,
-            subject: 'رمز تسجيل الدخول - الجدول الذكي',
-            text: `مرحباً ${user.fullName}،\nرمز الدخول الخاص بك هو: ${otp}`
-        });
+        await sendEmailAPI(
+            email,
+            'رمز تسجيل الدخول - الجدول الذكي',
+            `مرحباً ${user.fullName}،\nرمز الدخول الخاص بك هو: ${otp}`
+        );
 
         res.status(200).send("OTPSent");
     } catch(err) { 
@@ -138,6 +159,67 @@ app.post('/login', async (req, res) => {
     }
 });
 
+app.post('/resend-otp', async (req, res) => {
+    try {
+        const email = req.body.email.toLowerCase().trim();
+        const user = await User.findOne({ email });
+        if(!user) return res.status(404).send("UserNotFound");
+
+        const { otp, otpExpires } = generateOTP();
+        await User.updateOne({ email }, { $set: { otp, otpExpires } });
+        
+        await sendEmailAPI(
+            email,
+            'إعادة إرسال رمز التحقق - الجدول الذكي',
+            `رمز التحقق الجديد الخاص بك هو: ${otp}`
+        );
+
+        res.status(200).send("Sent");
+    } catch(err) { 
+        console.error("Resend OTP Error:", err);
+        res.status(500).send("Error"); 
+    }
+});
+
+app.post('/forgot-password', async (req, res) => {
+    try {
+        const email = req.body.email.toLowerCase().trim();
+        const user = await User.findOne({ email });
+        if(!user) return res.status(404).send("UserNotFound");
+
+        const { otp, otpExpires } = generateOTP();
+        await User.updateOne({ email }, { $set: { otp, otpExpires } });
+        
+        await sendEmailAPI(
+            email,
+            'إعادة تعيين كلمة المرور - الجدول الذكي',
+            `طلبنا هذا الرمز لإعادة تعيين كلمة المرور. الرمز هو: ${otp}`
+        );
+
+        res.status(200).send("Sent");
+    } catch(err) { 
+        console.error("Forgot Password Error:", err);
+        res.status(500).send("Error"); 
+    }
+});
+
+app.post('/reset-password', async (req, res) => {
+    try {
+        const { email, newPassword } = req.body;
+        const cleanEmail = email.toLowerCase().trim();
+        
+        const hpword = await bcrypt.hash(newPassword, 10);
+        await User.updateOne({ email: cleanEmail }, { $set: { pword: hpword } });
+        
+        res.status(200).send("Success");
+    } catch(err) { 
+        res.status(500).send("Error"); 
+    }
+});
+
+// ==========================================
+// مسارات المدارس والمهام
+// ==========================================
 app.get('/get-schools', async (req, res) => {
     try { res.status(200).json(await School.find()); } 
     catch (err) { res.status(500).send("Error"); }
@@ -247,64 +329,4 @@ app.post('/delete-task', async (req, res) => {
     }
 });
 
-app.post('/resend-otp', async (req, res) => {
-    try {
-        const email = req.body.email.toLowerCase().trim();
-        const user = await User.findOne({ email });
-        if(!user) return res.status(404).send("UserNotFound");
-
-        const { otp, otpExpires } = generateOTP();
-        await User.updateOne({ email }, { $set: { otp, otpExpires } });
-        
-        await transporter.sendMail({
-            from: process.env.EMAIL_USER,
-            to: email,
-            subject: 'إعادة إرسال رمز التحقق - الجدول الذكي',
-            text: `رمز التحقق الجديد الخاص بك هو: ${otp}`
-        });
-
-        res.status(200).send("Sent");
-    } catch(err) { 
-        console.error("Resend OTP Error:", err);
-        res.status(500).send("Error"); 
-    }
-});
-
-app.post('/forgot-password', async (req, res) => {
-    try {
-        const email = req.body.email.toLowerCase().trim();
-        const user = await User.findOne({ email });
-        if(!user) return res.status(404).send("UserNotFound");
-
-        const { otp, otpExpires } = generateOTP();
-        await User.updateOne({ email }, { $set: { otp, otpExpires } });
-        
-        await transporter.sendMail({
-            from: process.env.EMAIL_USER,
-            to: email,
-            subject: 'إعادة تعيين كلمة المرور - الجدول الذكي',
-            text: `طلبنا هذا الرمز لإعادة تعيين كلمة المرور. الرمز هو: ${otp}`
-        });
-
-        res.status(200).send("Sent");
-    } catch(err) { 
-        console.error("Forgot Password Error:", err);
-        res.status(500).send("Error"); 
-    }
-});
-
-app.post('/reset-password', async (req, res) => {
-    try {
-        const { email, newPassword } = req.body;
-        const cleanEmail = email.toLowerCase().trim();
-        
-        const hpword = await bcrypt.hash(newPassword, 10);
-        await User.updateOne({ email: cleanEmail }, { $set: { pword: hpword } });
-        
-        res.status(200).send("Success");
-    } catch(err) { 
-        res.status(500).send("Error"); 
-    }
-});
-
-app.listen(3000, () => console.log("Server running on port 3000 🚀"));
+app.listen(3000, () => console.log("🚀 Server running on port 3000"));
