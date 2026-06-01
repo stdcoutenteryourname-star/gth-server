@@ -3,7 +3,6 @@ const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
-const nodemailer = require('nodemailer'); 
 const User = require('./GTHU');
 const Task = require('./GTHTask');
 const School = require('./GTHSchool');
@@ -14,13 +13,8 @@ app.use(express.urlencoded({extended: true}));
 app.use(express.json());
 
 mongoose.connect(process.env.DB_URI)
-.then(() => console.log("Database connected successfully! 🚀"))
-.catch(err => console.error("Database connection error:", err));
-
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
-});
+.then(() => console.log("Connected"))
+.catch(err => console.error("Error:", err));
 
 function generateOTP() {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -28,14 +22,9 @@ function generateOTP() {
     return { otp, otpExpires };
 }
 
-// ==========================================
-// 1. مسارات التسجيل والتحقق (نظام متكامل ومحمي)
-// ==========================================
 app.post('/reg', async (req, res) => {
     try {
         const { email, fullName, role, schoolId, pword } = req.body;
-        
-        // تشفير كلمة المرور قبل الحفظ
         const hashedPassword = await bcrypt.hash(pword, 10);
         
         const newUser = new User({
@@ -44,51 +33,13 @@ app.post('/reg', async (req, res) => {
             role,
             schoolId,
             pword: hashedPassword,
-            isVerified: true // تفعيل تلقائي لتجاوز مشكلة الإيميل
+            isVerified: true
         });
 
         await newUser.save();
-        res.status(200).send("تم التسجيل بنجاح!");
-    } catch (err) {
-        console.error("خطأ التسجيل:", err);
-        res.status(500).send("حدث خطأ في السيرفر");
-    }
-});
-        await newUser.save();
-        
-       // استبدل هذا الجزء:
-/*
-await transporter.sendMail({
-    from: process.env.EMAIL_USER, to: email,
-    subject: 'رمز التحقق', 
-    text: `رمزك هو: ${otp}`
-});
-*/
-// واكتب بدلاً منه للتجربة فقط:
-console.log("تم إنشاء الرمز بنجاح وهو:", otp); 
-        
-res.status(200).send("Sent");
-2. لماذا هذا هو الحل الأفضل حالياً؟
-إلغاء الحاجة لـ Gmail: لن تحتاج الآن لـ EMAIL_USER و EMAIL_PASS (يمكنك حذفهم من Render لتنظيف الإعدادات).
-
-إكمال التسجيل: بمجرد عمل Commit و Push لهذا التعديل، سيقوم الموقع بإنشاء الحساب فوراً، وستظهر لك رسالة "تم التسجيل بنجاح" في الموقع، وسيمكنك رؤية الـ OTP في الـ Logs على Render (لأننا كتبنا console.log).
-
-3. كيف تحصل على الـ OTP؟
-بعد تعديل الكود ورفع الملف:
-
-حاول التسجيل في الموقع.
-
-عندما يطلب منك إدخال الـ OTP، اذهب فوراً إلى صفحة Logs في Render.
-
-ستجد الرمز مكتوباً هناك بوضوح (مثلاً: تم إنشاء الرمز بنجاح وهو: 123456).
-
-خذ هذا الرمز وضعه في الموقع، وسيدخل بك فوراً!
-
-هذا الحل سيضمن لك أن الموقع يعمل بنسبة 100% الآن بدون انتظار حل مشاكل Gmail. قم بتعديل الملف وارفعه (بنفس طريقة GitHub) وأخبرني عندما تظهر كلمة Live في Render لأساعدك في الخطوة التالية! 🚀
         res.status(201).send("Created");
-    } catch(err) { 
-        console.error("Registration Error:", err);
-        res.status(500).send("Error"); 
+    } catch (err) {
+        res.status(500).send("Error");
     }
 });
 
@@ -102,17 +53,14 @@ app.post('/verify-otp', async (req, res) => {
         if(user.otp !== otp) return res.status(400).send("WrongOTP");
         if(user.otpExpires < new Date()) return res.status(400).send("ExpiredOTP");
 
-        // تحديث الحساب وحذف الـ OTP للحماية
         await User.updateOne({ email }, { 
             $set: { isVerified: true }, 
             $unset: { otp: 1, otpExpires: 1 } 
         });
 
-        // جلب البيانات النظيفة (بدون الباسورد) لإرسالها للمتصفح
         const updatedUser = await User.findOne({ email }).select('-pword');
         res.status(200).json(updatedUser);
     } catch(err) { 
-        console.error("Verify OTP Error:", err);
         res.status(500).send("Error"); 
     }
 });
@@ -129,22 +77,13 @@ app.post('/login', async (req, res) => {
         const { otp, otpExpires } = generateOTP();
         await User.updateOne({ email }, { $set: { otp, otpExpires } });
         
-        await transporter.sendMail({ 
-            from: process.env.EMAIL_USER, to: email, 
-            subject: 'رمز تسجيل الدخول - الجدول الذكي', 
-            text: `مرحباً ${user.fullName}،\nرمز الدخول الخاص بك: ${otp}` 
-        });
-
+        console.log("OTP:", otp);
         res.status(200).send("OTPSent");
     } catch(err) { 
-        console.error("Login Error:", err);
         res.status(500).send("Error"); 
     }
 });
 
-// ==========================================
-// 2. إدارة المدارس والطلاب (لوحة تحكم الإدارة)
-// ==========================================
 app.get('/get-schools', async (req, res) => {
     try { res.status(200).json(await School.find()); } 
     catch (err) { res.status(500).send("Error"); }
@@ -158,7 +97,6 @@ app.post('/manage-school', async (req, res) => {
             const existingSchool = await School.findOne({ adminEmail });
             if (existingSchool) return res.status(400).send("AdminAlreadyHasSchool");
 
-            // خوارزمية ذكية لاستخراج أعلى ID لمنع التعارض المستقبلي
             const allSchools = await School.find();
             let maxId = 0;
             allSchools.forEach(s => {
@@ -177,12 +115,10 @@ app.post('/manage-school', async (req, res) => {
             const school = await School.findOne({ schoolId });
             if(!school) return res.status(404).send("SchoolNotFound");
             
-            // استخدام addToSet لمنع إضافة نفس الشعبة مرتين (حماية إضافية)
             await School.updateOne({ schoolId }, { $addToSet: { sections: newSection } });
             res.status(200).send("SectionAdded");
         }
     } catch(err) { 
-        console.error("Manage School Error:", err);
         res.status(500).send("Error"); 
     }
 });
@@ -192,7 +128,6 @@ app.post('/admin/users', async (req, res) => {
         const users = await User.find({ schoolId: req.body.schoolId, role: { $in: ['student', 'teacher'] } }).select('-pword -otp -otpExpires');
         res.status(200).json(users);
     } catch(err) { 
-        console.error("Admin Get Users Error:", err);
         res.status(500).send("Error"); 
     }
 });
@@ -207,7 +142,6 @@ app.post('/admin/update-user', async (req, res) => {
         await User.updateOne({ email: userEmail }, { $set: updateData });
         res.status(200).send("UserUpdated");
     } catch(err) { 
-        console.error("Admin Update User Error:", err);
         res.status(500).send("Error"); 
     }
 });
@@ -217,14 +151,10 @@ app.post('/admin/delete-user', async (req, res) => {
         await User.deleteOne({ email: req.body.userEmail }); 
         res.status(200).send("UserDeleted"); 
     } catch(err) { 
-        console.error("Delete User Error:", err);
         res.status(500).send("Error"); 
     }
 });
 
-// ==========================================
-// 3. إدارة المهام (محرك الجدول)
-// ==========================================
 app.post('/add-task', async (req, res) => {
     try {
         const { schoolId, teacherName, week, day, section, taskType, title, description, fromDate, toDate, studyPlan } = req.body;
@@ -232,7 +162,6 @@ app.post('/add-task', async (req, res) => {
         await newTask.save();
         res.status(201).send("TaskAdded");
     } catch(err) { 
-        console.error("Add Task Error:", err);
         res.status(500).send("Error"); 
     }
 });
@@ -251,7 +180,6 @@ app.post('/get-tasks', async (req, res) => {
         const tasks = await Task.find(query);
         res.status(200).json(tasks);
     } catch(err) { 
-        console.error("Get Tasks Error:", err);
         res.status(500).send("Error"); 
     }
 });
@@ -261,16 +189,10 @@ app.post('/delete-task', async (req, res) => {
         await Task.findByIdAndDelete(req.body.taskId); 
         res.status(200).send("Deleted"); 
     } catch(err) { 
-        console.error("Delete Task Error:", err);
         res.status(500).send("Error"); 
     }
 });
 
-// ==========================================
-// مسارات إعادة إرسال الرمز ونسيت كلمة المرور
-// ==========================================
-
-// 1. إعادة إرسال الرمز (Resend OTP)
 app.post('/resend-otp', async (req, res) => {
     try {
         const email = req.body.email.toLowerCase().trim();
@@ -280,16 +202,11 @@ app.post('/resend-otp', async (req, res) => {
         const { otp, otpExpires } = generateOTP();
         await User.updateOne({ email }, { $set: { otp, otpExpires } });
         
-        await transporter.sendMail({
-            from: process.env.EMAIL_USER, to: email,
-            subject: 'إعادة إرسال رمز التحقق - الجدول الذكي', 
-            text: `رمز التحقق الجديد الخاص بك هو: ${otp}`
-        });
+        console.log("OTP:", otp);
         res.status(200).send("Sent");
     } catch(err) { res.status(500).send("Error"); }
 });
 
-// 2. طلب إعادة تعيين كلمة المرور (Forgot Password)
 app.post('/forgot-password', async (req, res) => {
     try {
         const email = req.body.email.toLowerCase().trim();
@@ -299,16 +216,11 @@ app.post('/forgot-password', async (req, res) => {
         const { otp, otpExpires } = generateOTP();
         await User.updateOne({ email }, { $set: { otp, otpExpires } });
         
-        await transporter.sendMail({
-            from: process.env.EMAIL_USER, to: email,
-            subject: 'إعادة تعيين كلمة المرور - الجدول الذكي', 
-            text: `طلبنا هذا الرمز لإعادة تعيين كلمة المرور. الرمز هو: ${otp}`
-        });
+        console.log("OTP:", otp);
         res.status(200).send("Sent");
     } catch(err) { res.status(500).send("Error"); }
 });
 
-// 3. حفظ كلمة المرور الجديدة
 app.post('/reset-password', async (req, res) => {
     try {
         const { email, newPassword } = req.body;
@@ -321,4 +233,4 @@ app.post('/reset-password', async (req, res) => {
     } catch(err) { res.status(500).send("Error"); }
 });
 
-app.listen(3000, () => console.log("Server running on port 3000 🚀"));
+app.listen(3000, () => console.log("Run"));
